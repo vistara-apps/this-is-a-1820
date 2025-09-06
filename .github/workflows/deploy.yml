@@ -62,8 +62,18 @@ jobs:
       env:
         NODE_OPTIONS: --max-old-space-size=4096
         
+    - name: Check Vercel secrets
+      id: check-secrets
+      run: |
+        if [ -n "${{ secrets.VERCEL_TOKEN }}" ] && [ -n "${{ secrets.VERCEL_ORG_ID }}" ] && [ -n "${{ secrets.VERCEL_PROJECT_ID }}" ]; then
+          echo "vercel-configured=true" >> $GITHUB_OUTPUT
+        else
+          echo "vercel-configured=false" >> $GITHUB_OUTPUT
+          echo "⚠️ Vercel secrets not configured. Skipping deployment."
+        fi
+        
     - name: Deploy to Vercel (Production)
-      if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+      if: steps.check-secrets.outputs.vercel-configured == 'true' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
       uses: amondnet/vercel-action@v25
       with:
         vercel-token: ${{ secrets.VERCEL_TOKEN }}
@@ -72,25 +82,47 @@ jobs:
         vercel-project-id: ${{ secrets.VERCEL_PROJECT_ID }}
         
     - name: Deploy to Vercel (Preview)
-      if: github.event_name == 'pull_request'
+      if: steps.check-secrets.outputs.vercel-configured == 'true' && github.event_name == 'pull_request'
       uses: amondnet/vercel-action@v25
       with:
         vercel-token: ${{ secrets.VERCEL_TOKEN }}
         vercel-org-id: ${{ secrets.VERCEL_ORG_ID }}
         vercel-project-id: ${{ secrets.VERCEL_PROJECT_ID }}
+        github-comment: true
+        github-deployment: false
         
-    - name: Comment PR with deployment URL
+    - name: Comment PR with deployment status
       if: github.event_name == 'pull_request'
       uses: actions/github-script@v7
       with:
         script: |
+          const vercelConfigured = '${{ steps.check-secrets.outputs.vercel-configured }}' === 'true';
+          let body;
+          
+          if (vercelConfigured) {
+            body = `🚀 **Preview Deployment Ready!**
+            
+            This preview will be automatically updated when you push new commits to this PR.
+            
+            Build completed successfully! ✅`;
+          } else {
+            body = `✅ **Build Completed Successfully!**
+            
+            The application has been built and is ready for deployment.
+            
+            📝 **Note:** Vercel deployment is not configured for this repository. To enable automatic deployments:
+            1. Set up a Vercel project
+            2. Add the following secrets to this repository:
+               - \`VERCEL_TOKEN\`
+               - \`VERCEL_ORG_ID\`
+               - \`VERCEL_PROJECT_ID\`
+            
+            Build artifacts are available in the \`dist/\` directory.`;
+          }
+          
           github.rest.issues.createComment({
             issue_number: context.issue.number,
             owner: context.repo.owner,
             repo: context.repo.repo,
-            body: `🚀 **Preview Deployment Ready!**
-            
-            This preview will be automatically updated when you push new commits to this PR.
-            
-            Build completed successfully! ✅`
+            body: body
           });
